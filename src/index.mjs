@@ -78,10 +78,14 @@ initEventScheduler();
   initializeGiftcodeCleanup();
   
   // Initialize TaiXiu game manager
-  const TaiXiuGameManager = (await import('./game/taiXiuManager.mjs')).default;
-  global.taiXiuManager = new TaiXiuGameManager(client);
-  await global.taiXiuManager.initializeAllGames();
-  console.log('🎲 TaiXiu Game Manager initialized');
+  try {
+    const TaiXiuGameManager = (await import('./game/taiXiuManager.mjs')).default;
+    global.taiXiuManager = new TaiXiuGameManager(client);
+    await global.taiXiuManager.initializeAllGames();
+    console.log('🎲 TaiXiu Game Manager initialized');
+  } catch (error) {
+    console.error('Error initializing TaiXiu Game Manager:', error);
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction)=>{
@@ -105,16 +109,20 @@ client.on(Events.InteractionCreate, async (interaction)=>{
   } else if (interaction.isModalSubmit()) {
     // Handle modal submissions
     await handleModalSubmit(interaction);
-  } else if (interaction.isModalSubmit()) {
-    if (interaction.customId === 'giftcode_modal') {
-      await handleGiftcodeModal(interaction);
-    } else if (interaction.customId === 'tx_custom_amount_modal') {
-      await handleCustomAmountModal(interaction);
-    }
   }
 });
 
 client.login(TOKEN);
+
+// Process error handlers
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
 
 // Handle button interactions
 async function handleButtonInteraction(interaction) {
@@ -164,8 +172,15 @@ async function handleButtonInteraction(interaction) {
     }
   } catch (error) {
     console.error('Button interaction error:', error);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: 'Có lỗi xảy ra!', ephemeral: true });
+    try {
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: 'Có lỗi xảy ra!', ephemeral: true });
+      } else if (interaction.deferred && !interaction.replied) {
+        await interaction.editReply({ content: 'Có lỗi xảy ra!' });
+      }
+    } catch (replyError) {
+      console.error('Error replying to interaction:', replyError);
+      // Don't throw here to prevent uncaught exceptions
     }
   }
 }
@@ -683,12 +698,13 @@ async function handleModalSubmit(interaction) {
   const userId = interaction.user.id;
   const guildId = interaction.guildId;
   
-  let profileTheme = await ProfileTheme.findOne({ userId, guildId });
-  if (!profileTheme) {
-    profileTheme = await ProfileTheme.create({ userId, guildId });
-  }
-  
+  // Handle theme modals
   if (modalId === 'theme_status_modal') {
+    let profileTheme = await ProfileTheme.findOne({ userId, guildId });
+    if (!profileTheme) {
+      profileTheme = await ProfileTheme.create({ userId, guildId });
+    }
+    
     const newStatus = interaction.fields.getTextInputValue('status_input');
     profileTheme.showcase.status = newStatus;
     await profileTheme.save();
@@ -701,6 +717,11 @@ async function handleModalSubmit(interaction) {
     
     await interaction.reply({ embeds: [embed], ephemeral: true });
   } else if (modalId === 'theme_quote_modal') {
+    let profileTheme = await ProfileTheme.findOne({ userId, guildId });
+    if (!profileTheme) {
+      profileTheme = await ProfileTheme.create({ userId, guildId });
+    }
+    
     const newQuote = interaction.fields.getTextInputValue('quote_input');
     profileTheme.showcase.quote = newQuote;
     await profileTheme.save();
@@ -712,70 +733,71 @@ async function handleModalSubmit(interaction) {
       .setTimestamp();
     
     await interaction.reply({ embeds: [embed], ephemeral: true });
-  } else if (modalId === 'tx_custom_amount') {
-    await handleTaiXiuCustomAmount(interaction);
   } else if (modalId === 'giftcode_modal') {
     await handleGiftcodeModal(interaction);
-  } else if (modalId === 'tx_custom_amount_modal') {
-    // Handle custom amount modal submission
-    const amountStr = interaction.fields.getTextInputValue('custom_amount_input');
-    const amount = parseInt(amountStr.replace(/[^\d]/g, ''));
-    
-    if (isNaN(amount) || amount < 100) {
-      return interaction.reply({ 
-        content: 'Số tiền không hợp lệ! Tối thiểu 100 xu.', 
-        ephemeral: true 
+  } else if (modalId === 'taixiu_custom_modal') {
+    try {
+      // Defer reply to prevent timeout
+      await interaction.deferReply({ ephemeral: true });
+      
+      const amount = parseInt(interaction.fields.getTextInputValue('bet_amount'));
+      const choice = interaction.fields.getTextInputValue('bet_choice').toLowerCase().trim();
+      
+      // Validate input
+      if (isNaN(amount) || amount < 100) {
+        return await interaction.editReply({
+          content: '❌ Số tiền phải là số và ít nhất 100!'
+        });
+      }
+
+      if (choice !== 'tai' && choice !== 'xiu') {
+        return await interaction.editReply({
+          content: '❌ Chỉ được chọn "tai" hoặc "xiu"!'
+        });
+      }
+
+      // Check if game manager exists
+      if (!global.taiXiuManager) {
+        return await interaction.editReply({
+          content: '❌ Hệ thống tài xỉu chưa sẵn sàng!'
+        });
+      }
+
+      // Check if game is active and in betting phase
+      const gameData = await global.taiXiuManager.getGameData(guildId);
+      if (!gameData || !gameData.isActive || !gameData.bettingPhase) {
+        return await interaction.editReply({
+          content: '❌ Không thể đặt cược lúc này! Game có thể đã kết thúc hoặc chưa bắt đầu.'
+        });
+      }
+
+      // Place the bet using game manager
+      await global.taiXiuManager.placeBet(guildId, userId, choice, amount);
+      
+      const choiceText = choice === 'tai' ? '🔴 TÀI' : '⚫ XỈU';
+      
+      await interaction.editReply({
+        content: `✅ Đặt cược thành công!\n**${choiceText}** - **${formatCurrency(amount)}**`
       });
+      
+    } catch (error) {
+      console.error('Modal submit error:', error);
+      try {
+        const errorMessage = error.message || 'Có lỗi xảy ra khi đặt cược!';
+        if (interaction.deferred) {
+          await interaction.editReply({
+            content: `❌ ${errorMessage}`
+          });
+        } else {
+          await interaction.reply({
+            content: `❌ ${errorMessage}`,
+            ephemeral: true
+          });
+        }
+      } catch (replyError) {
+        console.error('Error replying to modal:', replyError);
+      }
     }
-    
-    const userSelection = global.taixiuSelections?.get(userId);
-    if (!userSelection?.choice) {
-      return interaction.reply({ 
-        content: 'Vui lòng chọn TÀI hoặc XỈU trước!', 
-        ephemeral: true 
-      });
-    }
-    
-    let profile = await User.findOne({ userId, guildId });
-    if (!profile) profile = await User.create({ userId, guildId });
-    
-    // Place bet
-    const bet = {
-      userId,
-      username: interaction.user.username,
-      choice: userSelection.choice,
-      amount,
-      round: gameRoom.round
-    };
-    
-    playerBets.set(betKey, bet);
-    gameRoom.bets.push(bet);
-    gameRoom.totalPool += amount;
-    
-    // Deduct money
-    profile.coins = (profile.coins || 0) - amount;
-    await profile.save();
-    
-    // Clean up selection
-    global.taixiuSelections?.delete(userId);
-    
-    const timeLeft = Math.max(0, Math.ceil((gameRoom.endTime - Date.now()) / 1000));
-    
-    const embed = new EmbedBuilder()
-      .setColor('#00ff00')
-      .setTitle('🎉 Đặt Cược Tùy Chỉnh Thành Công!')
-      .addFields(
-        { name: '🎯 Lựa chọn', value: userSelection.choice === 'tai' ? '🔴 TÀI (11-18)' : '⚫ XỈU (3-10)', inline: true },
-        { name: '💰 Số tiền cược', value: formatCurrency(amount), inline: true },
-        { name: '🏆 Tổng pool', value: formatCurrency(gameRoom.totalPool), inline: true },
-        { name: '⏰ Thời gian còn lại', value: `${timeLeft}s`, inline: true },
-        { name: '👥 Số người cược', value: `${gameRoom.bets.length}`, inline: true },
-        { name: '💳 Số dư còn lại', value: formatCurrency(profile.coins), inline: true }
-      )
-      .setFooter({ text: 'Chúc bạn may mắn! 🍀' })
-      .setTimestamp();
-    
-    await interaction.reply({ embeds: [embed], ephemeral: true });
   }
 }
 
@@ -1001,15 +1023,17 @@ async function handleQuickBet(interaction) {
   const guildId = interaction.guildId;
   
   try {
+    // Defer reply to prevent timeout
+    await interaction.deferReply({ ephemeral: true });
+    
     // Parse quick bet: quickbet_tai_1000 or quickbet_xiu_1000
     const parts = customId.split('_');
     const choice = parts[1]; // 'tai' or 'xiu'
     const amount = parseInt(parts[2]); // amount
     
     if (!global.taiXiuManager) {
-      return interaction.reply({ 
-        content: 'Hệ thống tài xỉu chưa sẵn sàng!', 
-        ephemeral: true 
+      return await interaction.editReply({ 
+        content: 'Hệ thống tài xỉu chưa sẵn sàng!' 
       });
     }
     
@@ -1017,17 +1041,26 @@ async function handleQuickBet(interaction) {
     await global.taiXiuManager.placeBet(guildId, userId, choice, amount);
     
     const choiceText = choice === 'tai' ? '🔴 TÀI' : '⚫ XỈU';
-    await interaction.reply({ 
-      content: `✅ Đã đặt cược **${choiceText}** với số tiền **${formatCurrency(amount)}**!`, 
-      ephemeral: true 
+    await interaction.editReply({ 
+      content: `✅ Đã đặt cược **${choiceText}** với số tiền **${formatCurrency(amount)}**!`
     });
     
   } catch (error) {
     console.error('Quick bet error:', error);
-    await interaction.reply({ 
-      content: error.message || 'Có lỗi xảy ra khi đặt cược!', 
-      ephemeral: true 
-    });
+    try {
+      if (interaction.deferred) {
+        await interaction.editReply({ 
+          content: error.message || 'Có lỗi xảy ra khi đặt cược!'
+        });
+      } else {
+        await interaction.reply({ 
+          content: error.message || 'Có lỗi xảy ra khi đặt cược!', 
+          ephemeral: true 
+        });
+      }
+    } catch (replyError) {
+      console.error('Error replying to interaction:', replyError);
+    }
   }
 }
 
@@ -1145,230 +1178,126 @@ async function handleGiftcodeModal(interaction) {
 
 // Handle Tai Xiu custom play
 async function handleTaiXiuCustomPlay(interaction) {
-  const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = await import('discord.js');
-  
-  const embed = new EmbedBuilder()
-    .setColor('#e74c3c')
-    .setTitle('🎯 Tài Xỉu - Chế Độ Tùy Chỉnh')
-    .setDescription('Chọn TÀI hoặc XỈU, sau đó chọn số tiền cược')
-    .addFields(
-      { name: '🔴 TÀI', value: 'Tổng 3 xúc xắc từ 11-17', inline: true },
-      { name: '⚫ XỈU', value: 'Tổng 3 xúc xắc từ 4-10', inline: true }
-    );
-
-  const choiceRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('tx_choice_tai')
-      .setLabel('🔴 TÀI')
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId('tx_choice_xiu')
-      .setLabel('⚫ XỈU')
-      .setStyle(ButtonStyle.Secondary)
-  );
-
-  const amountRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('tx_amount_1000')
-      .setLabel('💰 1K')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId('tx_amount_5000')
-      .setLabel('💰 5K')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId('tx_amount_10000')
-      .setLabel('💰 10K')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId('tx_amount_allin')
-      .setLabel('🔥 ALL IN')
-      .setStyle(ButtonStyle.Danger)
-  );
-
-  await interaction.reply({
-    embeds: [embed],
-    components: [choiceRow, amountRow],
-    ephemeral: true
-  });
-}
-
-// Handle tài xỉu analysis (view recent history)
-async function handleTaiXiuAnalysis(interaction) {
-  const guildId = interaction.guildId;
-  
   try {
+    const guildId = interaction.guild.id;
+    
+    // Check if game manager exists
     if (!global.taiXiuManager) {
-      return interaction.reply({
-        content: 'Hệ thống tài xỉu chưa sẵn sàng!',
+      return await interaction.reply({
+        content: '❌ Hệ thống tài xỉu chưa sẵn sàng!',
         ephemeral: true
       });
     }
-
+    
     const gameData = await global.taiXiuManager.getGameData(guildId);
     
-    if (!gameData) {
-      return interaction.reply({
-        content: 'Chưa có phòng game nào!',
+    if (!gameData || !gameData.isActive) {
+      return await interaction.reply({
+        content: '❌ Chưa có game tài xỉu nào đang hoạt động! Sử dụng `/taixiu start` để bắt đầu.',
+        ephemeral: true
+      });
+    }
+    
+    if (!gameData.bettingPhase) {
+      return await interaction.reply({
+        content: '❌ Hiện tại không thể đặt cược! Game có thể đang xử lý kết quả.',
         ephemeral: true
       });
     }
 
-    // Get recent 10 results
-    const recentResults = gameData.history.slice(-10);
+    // Create modal for custom bet
+    const modal = new ModalBuilder()
+      .setCustomId('taixiu_custom_modal')
+      .setTitle('🎯 Đặt Cược Tùy Chỉnh');
 
-    if (recentResults.length === 0) {
-      return interaction.reply({
-        content: 'Chưa có lịch sử để soi cầu!',
-        ephemeral: true
-      });
-    }
+    const amountInput = new TextInputBuilder()
+      .setCustomId('bet_amount')
+      .setLabel('Số tiền muốn đặt cược')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('Nhập số tiền (ít nhất 100)')
+      .setMinLength(3)
+      .setMaxLength(10)
+      .setRequired(true);
 
-    const { EmbedBuilder } = await import('discord.js');
-  
-  // Calculate stats
-  const taiCount = recentResults.filter(r => r.result === 'tai').length;
-  const xiuCount = recentResults.filter(r => r.result === 'xiu').length;
-  
-  // Current streak
-  let currentStreak = { type: 'Không có', count: 0 };
-  if (recentResults.length > 0) {
-    const lastResult = recentResults[recentResults.length - 1].result;
-    let streakCount = 1;
-    
-    for (let i = recentResults.length - 2; i >= 0; i--) {
-      if (recentResults[i].result === lastResult) {
-        streakCount++;
-      } else {
-        break;
-      }
-    }
-    
-    currentStreak = {
-      type: lastResult === 'tai' ? 'TÀI' : 'XỈU',
-      count: streakCount
-    };
-  }
-  
-  const embed = new EmbedBuilder()
-    .setColor('#9b59b6')
-    .setTitle('🔮 Soi Cầu Tài Xỉu')
-    .setDescription(`**Lịch sử ${recentResults.length} ván gần nhất**`)
-    .addFields(
-      { name: '📊 Thống kê', value: `🔴 TÀI: ${taiCount}/${recentResults.length} ván\n⚫ XỈU: ${xiuCount}/${recentResults.length} ván`, inline: true },
-      { name: '🔥 Chuỗi hiện tại', value: `${currentStreak.type} - ${currentStreak.count} ván liên tiếp`, inline: true },
-      { name: '🎯 Ván tiếp theo', value: `Ván #${gameRoom.round}`, inline: true }
-    )
-    .addFields({
-      name: '📜 Lịch sử chi tiết (mới → cũ)',
-      value: recentResults.slice().reverse().map((r, i) => {
-        const resultIcon = r.result === 'tai' ? '🔴' : '⚫';
-        const diceEmojis = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
-        const dice = r.dice.map(d => diceEmojis[d]).join('');
-        const isRecent = i < 3 ? '🆕' : '';
-        return `**Ván ${r.round}:** ${dice} = ${r.total} ${resultIcon} ${r.result.toUpperCase()} ${isRecent}`;
-      }).join('\n'),
-      inline: false
-    })
-    .setFooter({ text: 'Dựa vào lịch sử để tự đưa ra quyết định!' })
-    .setTimestamp();
-  
-  await interaction.reply({ 
-    embeds: [embed], 
-    ephemeral: true 
-  });
-  
+    const choiceInput = new TextInputBuilder()
+      .setCustomId('bet_choice')
+      .setLabel('Chọn TÀI hoặc XỈU')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('Nhập: tai hoặc xiu')
+      .setMinLength(3)
+      .setMaxLength(3)
+      .setRequired(true);
+
+    const firstRow = new ActionRowBuilder().addComponents(amountInput);
+    const secondRow = new ActionRowBuilder().addComponents(choiceInput);
+
+    modal.addComponents(firstRow, secondRow);
+
+    await interaction.showModal(modal);
   } catch (error) {
-    console.error('TaiXiu analysis error:', error);
+    console.error('TaiXiu custom play error:', error);
     await interaction.reply({
-      content: 'Có lỗi xảy ra khi xem phân tích!',
+      content: '❌ Có lỗi xảy ra khi xử lý yêu cầu!',
       ephemeral: true
     });
   }
 }
 
-// Handle final bet confirmation
-async function handleFinalBet(interaction) {
-  const customId = interaction.customId;
-  const parts = customId.split('_'); // ['final', 'bet', 'tai/xiu', 'amount']
-  const choice = parts[2];
-  const amount = parseInt(parts[3]);
-  
-  const userId = interaction.user.id;
-  const guildId = interaction.guildId;
-  
-  // Use the existing placeBet function logic
-  const { gameRooms, playerBets } = await import('./commands/taixiu.mjs');
-  const User = (await import('./models/User.mjs')).default;
-  
-  let profile = await User.findOne({ userId, guildId });
-  if (!profile) profile = await User.create({ userId, guildId });
-  
-  const gameRoom = gameRooms.get(guildId);
-  if (!gameRoom || gameRoom.status !== 'betting') {
-    return interaction.reply({ 
-      content: 'Không thể đặt cược lúc này!', 
-      ephemeral: true 
+// Handle TaiXiu analysis
+async function handleTaiXiuAnalysis(interaction) {
+  try {
+    const guildId = interaction.guild.id;
+    const gameData = await global.taiXiuManager.getGameData(guildId);
+    
+    if (!gameData) {
+      return await interaction.reply({
+        content: '❌ Chưa có game tài xỉu nào được khởi tạo!',
+        ephemeral: true
+      });
+    }
+
+    let analysisText = '📊 **PHÂN TÍCH LỊCH SỬ 10 VÁN GẦN NHẤT**\n\n';
+    
+    if (!gameData.history || gameData.history.length === 0) {
+      analysisText += '❌ Chưa có dữ liệu lịch sử!';
+    } else {
+      const recentHistory = gameData.history.slice(-10).reverse();
+      const diceEmojis = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+      
+      recentHistory.forEach((game, index) => {
+        const dice = game.dice.map(d => diceEmojis[d]).join(' ');
+        const resultIcon = game.result === 'tai' ? '🔴' : '⚫';
+        const resultText = game.result === 'tai' ? 'TÀI' : 'XỈU';
+        analysisText += `**${game.round}:** ${dice} = ${game.total} ${resultIcon} ${resultText}\n`;
+      });
+
+      // Thống kê
+      const taiCount = recentHistory.filter(g => g.result === 'tai').length;
+      const xiuCount = recentHistory.filter(g => g.result === 'xiu').length;
+      
+      analysisText += `\n📈 **THỐNG KÊ:**\n`;
+      analysisText += `🔴 TÀI: ${taiCount}/${recentHistory.length} (${((taiCount/recentHistory.length)*100).toFixed(1)}%)\n`;
+      analysisText += `⚫ XỈU: ${xiuCount}/${recentHistory.length} (${((xiuCount/recentHistory.length)*100).toFixed(1)}%)\n`;
+      
+      // Dự đoán đơn giản
+      const lastResult = recentHistory[0]?.result;
+      const trend = lastResult === 'tai' ? 'Có thể sẽ ra XỈU' : 'Có thể sẽ ra TÀI';
+      analysisText += `\n🔮 **DỰ ĐOÁN:** ${trend} (chỉ tham khảo)`;
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor('#9b59b6')
+      .setTitle('🔮 SOI CẦU TÀI XỈU')
+      .setDescription(analysisText)
+      .setFooter({ text: 'Lưu ý: Đây chỉ là phân tích thống kê, không đảm bảo độ chính xác!' })
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+  } catch (error) {
+    console.error('TaiXiu analysis error:', error);
+    await interaction.reply({
+      content: '❌ Có lỗi xảy ra khi phân tích!',
+      ephemeral: true
     });
   }
-  
-  // Check if user already bet this round
-  const betKey = `${guildId}_${userId}_${gameRoom.round}`;
-  if (playerBets.has(betKey)) {
-    return interaction.reply({ 
-      content: `Bạn đã đặt cược ván ${gameRoom.round} này rồi!`, 
-      ephemeral: true 
-    });
-  }
-  
-  if ((profile.coins || 0) < amount) {
-    const { formatCurrency } = await import('./commands/util.mjs');
-    return interaction.reply({ 
-      content: `Bạn không đủ tiền để cược ${formatCurrency(amount)}!`, 
-      ephemeral: true 
-    });
-  }
-  
-  // Place bet
-  const bet = {
-    userId,
-    username: interaction.user.username,
-    choice,
-    amount,
-    round: gameRoom.round
-  };
-  
-  playerBets.set(betKey, bet);
-  gameRoom.bets.push(bet);
-  gameRoom.totalPool += amount;
-  
-  // Add to jackpot (5% of bet)
-  const jackpotContribution = Math.floor(amount * gameRoom.settings.jackpotRate);
-  gameRoom.jackpot.amount += jackpotContribution;
-  gameRoom.jackpot.contributors++;
-  gameRoom.jackpot.totalContributed += jackpotContribution;
-  
-  // Deduct money temporarily
-  profile.coins = (profile.coins || 0) - amount;
-  await profile.save();
-  
-  const { formatCurrency } = await import('./commands/util.mjs');
-  const { EmbedBuilder } = await import('discord.js');
-  
-  const embed = new EmbedBuilder()
-    .setColor('#00ff00')
-    .setTitle('✅ Đặt Cược Thành Công!')
-    .setDescription(`**Ván #${gameRoom.round}**`)
-    .addFields(
-      { name: '🎯 Lựa chọn', value: choice === 'tai' ? '🔴 TÀI (11-18)' : '⚫ XỈU (3-10)', inline: true },
-      { name: '💰 Số tiền cược', value: formatCurrency(amount), inline: true },
-      { name: '💳 Số dư còn lại', value: formatCurrency(profile.coins), inline: true },
-      { name: '💎 Góp vào Jackpot', value: formatCurrency(jackpotContribution), inline: true },
-      { name: '🏆 Tổng pool', value: formatCurrency(gameRoom.totalPool), inline: true },
-      { name: '👥 Tổng người chơi', value: `${gameRoom.bets.length}`, inline: true }
-    )
-    .setFooter({ text: 'Chúc bạn may mắn!' })
-    .setTimestamp();
-  
-  await interaction.reply({ embeds: [embed], ephemeral: true });
 }

@@ -175,12 +175,17 @@ class TaiXiuGameManager {
       // Update game state
       gameState.bettingPhase = true;
       gameState.timeLeft = gameState.bettingTime;
+      gameState.messageId = null; // Reset message ID to send new message
       
-      // Clear previous round bets
+      // Clear previous round bets - set all active bets to inactive
       await TaiXiuBet.updateMany(
         { guildId, isActive: true },
         { isActive: false }
       );
+
+      // Reset betting totals for new round
+      gameState.totalBets = { tai: 0, xiu: 0 };
+      gameState.playerCount = { tai: 0, xiu: 0 };
 
       // Update database
       await TaiXiuGame.findOneAndUpdate(
@@ -197,7 +202,9 @@ class TaiXiuGameManager {
         }
       );
 
-      // Send new game message
+      console.log(`🎲 Starting new round ${gameState.round} for guild ${guildId}`);
+
+      // Send new game message immediately
       await this.updateGameMessage(guildId, gameState.bettingTime, true);
       
       // Schedule countdown
@@ -248,6 +255,9 @@ class TaiXiuGameManager {
 
       gameState.bettingPhase = false;
 
+      // Disable buttons on current message
+      await this.disableGameButtons(guildId);
+
       // Generate result
       const dice = [
         Math.floor(Math.random() * 6) + 1,
@@ -283,16 +293,23 @@ class TaiXiuGameManager {
       );
 
       // Process bets and payouts
-      await this.processBets(guildId, result);
+      await this.processBets(guildId, result, gameState.round);
 
       // Show result message
       await this.showResultMessage(guildId, resultData);
 
-      // Schedule next round
+      // Wait a bit then start next round immediately
       setTimeout(async () => {
         gameState.round++;
+        gameState.bettingPhase = true;
+        gameState.timeLeft = gameState.bettingTime;
+        
+        // Reset betting totals for new round
+        gameState.totalBets = { tai: 0, xiu: 0 };
+        gameState.playerCount = { tai: 0, xiu: 0 };
+        
         await this.startNewRound(guildId);
-      }, gameState.resultTime * 1000);
+      }, 3000); // Chỉ chờ 3 giây thay vì resultTime
 
     } catch (error) {
       console.error('Error ending betting phase:', error);
@@ -300,10 +317,11 @@ class TaiXiuGameManager {
   }
 
   // Process all bets for the round
-  async processBets(guildId, winningResult) {
+  async processBets(guildId, winningResult, round) {
     try {
       const activeBets = await TaiXiuBet.find({
         guildId,
+        round: round,
         isActive: true
       });
 
@@ -346,10 +364,13 @@ class TaiXiuGameManager {
           await message.edit({ embeds: [embed], components });
         } catch (error) {
           // Message not found, send new one
+          console.log(`🔄 Previous message not found, sending new one for guild ${guildId}`);
           message = await gameState.channel.send({ embeds: [embed], components });
           gameState.messageId = message.id;
         }
       } else {
+        // Always send new message when messageId is null
+        console.log(`📨 Sending new game message for round ${gameState.round} in guild ${guildId}`);
         message = await gameState.channel.send({ embeds: [embed], components });
         gameState.messageId = message.id;
         
@@ -364,15 +385,87 @@ class TaiXiuGameManager {
     }
   }
 
-  // Show result message
+  // Show result with dice animation
   async showResultMessage(guildId, resultData) {
     try {
       const gameState = this.activeGames.get(guildId);
       if (!gameState) return;
 
-      const embed = await this.createResultEmbed(guildId, resultData);
-      
-      await gameState.channel.send({ embeds: [embed] });
+      // Step 1: Show dice rolling animation
+      const rollingEmbed = new EmbedBuilder()
+        .setColor('#f39c12')
+        .setTitle('🎲 ĐANG LẮC XÚC XẮC...')
+        .setDescription('<a:xucxac:1408720448950243408> <a:xucxac:1408720448950243408> <a:xucxac:1408720448950243408>')
+        .setTimestamp();
+
+      const rollingMessage = await gameState.channel.send({ embeds: [rollingEmbed] });
+
+      // Animate dice rolling for 2 seconds với Discord emoji
+      const animations = [
+        '<a:xucxac:1408720448950243408> <a:xucxac:1408720448950243408> <a:xucxac:1408720448950243408>',
+        '<a:xucxac:1408720448950243408><a:xucxac:1408720448950243408><a:xucxac:1408720448950243408>',
+        '<a:xucxac:1408720448950243408>   <a:xucxac:1408720448950243408>   <a:xucxac:1408720448950243408>',
+        '🌀 <a:xucxac:1408720448950243408> 🌀 <a:xucxac:1408720448950243408> 🌀 <a:xucxac:1408720448950243408> 🌀',
+        '⚡ <a:xucxac:1408720448950243408> ⚡ <a:xucxac:1408720448950243408> ⚡ <a:xucxac:1408720448950243408> ⚡',
+        '💫 <a:xucxac:1408720448950243408> 💫 <a:xucxac:1408720448950243408> 💫 <a:xucxac:1408720448950243408> 💫',
+        '� <a:xucxac:1408720448950243408> � <a:xucxac:1408720448950243408> � <a:xucxac:1408720448950243408> �',
+        '✨ <a:xucxac:1408720448950243408> ✨ <a:xucxac:1408720448950243408> ✨ <a:xucxac:1408720448950243408> ✨'
+      ];
+      // Chỉ hiện emoji xúc xắc tĩnh trong 2.5 giây
+      setTimeout(async () => {
+        
+        // Step 2: Show actual dice faces
+        const { dice, total, result } = resultData;
+        // Sử dụng emoji Discord đẹp hơn
+        const diceEmojis = ['', '<:1a:1408716362779725934>', '<:2a:1408716833665712190>', '<:3a:1408716867631185950>', '<:4a:1408716899692576879>', '<:5a:1408716929056641076>', '<:6a:1408716970118873129>'];
+        // Fallback nếu không có custom emoji
+        const fallbackDiceEmojis = ['', '🎲①', '🎲②', '🎲③', '🎲④', '🎲⑤', '🎲⑥'];
+        
+        // Thử sử dụng custom emoji trước, nếu không có thì dùng fallback
+        let diceDisplay;
+        try {
+          diceDisplay = dice.map(d => diceEmojis[d] || fallbackDiceEmojis[d]).join(' ');
+        } catch (error) {
+          // Nếu custom emoji không hoạt động, dùng emoji mặc định
+          const defaultDiceEmojis = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+          diceDisplay = dice.map(d => defaultDiceEmojis[d]).join(' ');
+        }
+        
+        const resultEmbed = new EmbedBuilder()
+          .setColor(result === 'tai' ? '#e74c3c' : '#2c3e50')
+          .setTitle('🎲 KẾT QUẢ VÁN ' + gameState.round)
+          .setDescription(`**${diceDisplay}**\n\n**Tổng: ${total}** ${result === 'tai' ? '🔴' : '⚫'} **${result.toUpperCase()}**`)
+          .setTimestamp();
+
+        // Get bet statistics
+        const bets = await TaiXiuBet.find({ 
+          guildId, 
+          round: gameState.round, 
+          isActive: true 
+        });
+
+        if (bets.length > 0) {
+          const winners = bets.filter(bet => bet.choice === result);
+          const winnerCount = winners.length;
+          const totalWinnings = winners.reduce((sum, bet) => sum + bet.winAmount, 0);
+          
+          resultEmbed.addFields(
+            { 
+              name: '🎉 Kết quả', 
+              value: `**${winnerCount}** người thắng\nTổng thưởng: **${this.formatCurrency(totalWinnings)}**`, 
+              inline: false 
+            }
+          );
+        }
+
+        try {
+          await rollingMessage.edit({ embeds: [resultEmbed] });
+        } catch (error) {
+          // If can't edit, send new message
+          await gameState.channel.send({ embeds: [resultEmbed] });
+        }
+      }, 2500); // Tăng lên 2.5 giây để animation đầy đủ hơn
+
     } catch (error) {
       console.error('Error showing result message:', error);
     }
@@ -407,6 +500,7 @@ class TaiXiuGameManager {
     if (gameData.history && gameData.history.length > 0) {
       const recentHistory = gameData.history.slice(-5).reverse();
       const historyText = recentHistory.map(h => {
+        // Sử dụng emoji đẹp hơn cho lịch sử
         const diceEmojis = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
         const dice = h.dice.map(d => diceEmojis[d]).join('');
         const resultIcon = h.result === 'tai' ? '🔴' : '⚫';
@@ -459,6 +553,95 @@ class TaiXiuGameManager {
     ]);
 
     return embed;
+  }
+
+  // Disable buttons on current game message
+  async disableGameButtons(guildId) {
+    try {
+      const gameState = this.activeGames.get(guildId);
+      if (!gameState || !gameState.messageId) return;
+
+      const embed = await this.createGameEmbed(guildId, 0, false);
+      embed.setDescription('⏸️ **Ván đã kết thúc - Đang xử lý kết quả...**');
+      embed.setColor('#95a5a6');
+
+      // Create disabled buttons
+      const disabledButtons = this.createDisabledButtons();
+
+      try {
+        const message = await gameState.channel.messages.fetch(gameState.messageId);
+        await message.edit({ embeds: [embed], components: disabledButtons });
+        console.log(`🔒 Disabled buttons for round ${gameState.round} in guild ${guildId}`);
+      } catch (error) {
+        console.log('Could not disable buttons on previous message:', error.message);
+      }
+    } catch (error) {
+      console.error('Error disabling game buttons:', error);
+    }
+  }
+
+  // Create disabled button components
+  createDisabledButtons() {
+    const quickBetRow1 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('quickbet_tai_1000_disabled')
+        .setLabel('🔴 TÀI 1K')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId('quickbet_tai_5000_disabled')
+        .setLabel('🔴 TÀI 5K')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId('quickbet_tai_10000_disabled')
+        .setLabel('🔴 TÀI 10K')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId('quickbet_tai_50000_disabled')
+        .setLabel('🔴 TÀI 50K')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true)
+    );
+
+    const quickBetRow2 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('quickbet_xiu_1000_disabled')
+        .setLabel('⚫ XỈU 1K')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId('quickbet_xiu_5000_disabled')
+        .setLabel('⚫ XỈU 5K')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId('quickbet_xiu_10000_disabled')
+        .setLabel('⚫ XỈU 10K')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId('quickbet_xiu_50000_disabled')
+        .setLabel('⚫ XỈU 50K')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true)
+    );
+
+    const quickBetRow3 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('taixiu_analysis_disabled')
+        .setLabel('🔮 Soi Cầu')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId('taixiu_custom_disabled')
+        .setLabel('🎯 Tùy Chỉnh')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true)
+    );
+
+    return [quickBetRow1, quickBetRow2, quickBetRow3];
   }
 
   // Create game buttons
@@ -583,6 +766,11 @@ class TaiXiuGameManager {
   // Get game data from database
   async getGameData(guildId) {
     return await TaiXiuGame.findOne({ guildId });
+  }
+
+  // Format currency helper
+  formatCurrency(amount) {
+    return formatCurrency(amount);
   }
 }
 
