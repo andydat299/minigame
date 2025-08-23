@@ -147,6 +147,10 @@ async function handleButtonInteraction(interaction) {
       await handleQuickBet(interaction);
     } else if (customId === 'tx_play_custom') {
       await handleTaiXiuCustomPlay(interaction);
+    } else if (customId === 'taixiu_analysis') {
+      await handleTaiXiuAnalysis(interaction);
+    } else if (customId === 'taixiu_custom') {
+      await handleTaiXiuCustomPlay(interaction);
     } else if (customId === 'quick_giftcode') {
       await handleQuickGiftcode(interaction);
     }
@@ -1172,6 +1176,56 @@ async function handleGiftcodeModal(interaction) {
     .setTimestamp();
   
   await interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
+// Handle Tai Xiu custom play
+async function handleTaiXiuCustomPlay(interaction) {
+  const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = await import('discord.js');
+  
+  const embed = new EmbedBuilder()
+    .setColor('#e74c3c')
+    .setTitle('🎯 Tài Xỉu - Chế Độ Tùy Chỉnh')
+    .setDescription('Chọn TÀI hoặc XỈU, sau đó chọn số tiền cược')
+    .addFields(
+      { name: '🔴 TÀI', value: 'Tổng 3 xúc xắc từ 11-17', inline: true },
+      { name: '⚫ XỈU', value: 'Tổng 3 xúc xắc từ 4-10', inline: true }
+    );
+
+  const choiceRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('tx_choice_tai')
+      .setLabel('🔴 TÀI')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId('tx_choice_xiu')
+      .setLabel('⚫ XỈU')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  const amountRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('tx_amount_1000')
+      .setLabel('💰 1K')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('tx_amount_5000')
+      .setLabel('💰 5K')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('tx_amount_10000')
+      .setLabel('💰 10K')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('tx_amount_allin')
+      .setLabel('🔥 ALL IN')
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  await interaction.reply({
+    embeds: [embed],
+    components: [choiceRow, amountRow],
+    ephemeral: true
+  });
 }
 
 // Handle tài xỉu analysis (view recent history)
