@@ -74,16 +74,10 @@ export const data = new SlashCommandBuilder()
                     .setDescription('Hành động')
                     .setRequired(true)
                     .addChoices(
-                        { name: '🎮 Tạo phòng mới', value: 'create' },
-                        { name: '📊 Xem phòng hiện tại', value: 'status' },
-                        { name: '⏱️ Đặt thời gian game', value: 'timer' }
-                    ))
-            .addIntegerOption(option =>
-                option.setName('duration')
-                    .setDescription('Thời gian mỗi ván (giây)')
-                    .setRequired(false)
-                    .setMinValue(10)
-                    .setMaxValue(300)))
+                        { name: '🎮 Bắt đầu tài xỉu', value: 'start' },
+                        { name: '⏹️ Dừng tài xỉu', value: 'stop' },
+                        { name: '📊 Xem trạng thái', value: 'status' }
+                    )))
     .addSubcommand(subcommand =>
         subcommand
             .setName('jackpot')
@@ -515,52 +509,115 @@ async function handleHistory(interaction) {
 
 async function handleRoom(interaction) {
     const action = interaction.options.getString('action');
-    const duration = interaction.options.getInteger('duration') || 30;
     const guildId = interaction.guildId;
     
-    if (action === 'create') {
-        const gameRoom = createNewGameRoom(guildId, duration);
-        gameRooms.set(guildId, gameRoom);
-        
-        const embed = new EmbedBuilder()
-            .setColor('#00ff00')
-            .setTitle('🎮 Phòng Tài Xỉu Mới Đã Được Tạo!')
-            .addFields(
-                { name: '⏱️ Thời gian mỗi ván', value: `${duration} giây`, inline: true },
-                { name: '🎯 Trạng thái', value: 'Đang chờ cược', inline: true },
-                { name: '🎲 Ván số', value: `#${gameRoom.round}`, inline: true }
-            )
-            .setTimestamp();
-        
-        await interaction.reply({ embeds: [embed] });
-        
-        // Start the game loop
-        startGameLoop(guildId, interaction.channel);
-    } else if (action === 'status') {
-        const gameRoom = gameRooms.get(guildId);
-        if (!gameRoom) {
+    try {
+        if (!global.taiXiuManager) {
             return interaction.reply({
-                embeds: [errorEmbed('Chưa có phòng game nào!')],
+                embeds: [errorEmbed('Hệ thống tài xỉu chưa sẵn sàng!')],
                 ephemeral: true
             });
         }
-        
-        const timeLeft = Math.max(0, Math.ceil((gameRoom.endTime - Date.now()) / 1000));
-        
-        const embed = new EmbedBuilder()
-            .setColor('#48dbfb')
-            .setTitle('🎮 Trạng Thái Phòng Game')
-            .addFields(
-                { name: '🎲 Ván hiện tại', value: `#${gameRoom.round}`, inline: true },
-                { name: '📊 Trạng thái', value: gameRoom.status === 'betting' ? '💰 Đang nhận cược' : '🎲 Đang quay', inline: true },
-                { name: '⏰ Thời gian còn lại', value: `${timeLeft}s`, inline: true },
-                { name: '👥 Số người cược', value: `${gameRoom.bets.length}`, inline: true },
-                { name: '💰 Tổng pool', value: formatCurrency(gameRoom.totalPool), inline: true },
-                { name: '🏆 Ván đã chơi', value: `${gameRoom.history.length}`, inline: true }
-            )
-            .setTimestamp();
-        
-        await interaction.reply({ embeds: [embed] });
+
+        if (action === 'start') {
+            // Check permissions
+            if (!interaction.member.permissions.has('MANAGE_GUILD')) {
+                return interaction.reply({
+                    embeds: [errorEmbed('Bạn cần quyền "Quản lý server" để bắt đầu tài xỉu!')],
+                    ephemeral: true
+                });
+            }
+
+            const existingGame = await global.taiXiuManager.getGameData(guildId);
+            if (existingGame && existingGame.isActive) {
+                return interaction.reply({
+                    embeds: [errorEmbed('Tài xỉu đã đang chạy trong server này!')],
+                    ephemeral: true
+                });
+            }
+
+            await global.taiXiuManager.startGame(guildId, interaction.channelId);
+            
+            const embed = new EmbedBuilder()
+                .setColor('#00ff00')
+                .setTitle('🎮 Tài Xỉu Đã Bắt Đầu!')
+                .setDescription('Game tài xỉu đã được khởi động và sẽ chạy liên tục 24/7!')
+                .addFields([
+                    { name: '📍 Kênh', value: `<#${interaction.channelId}>`, inline: true },
+                    { name: '🔄 Auto Restart', value: 'Bật', inline: true },
+                    { name: '⏰ Thời gian mỗi ván', value: '30 giây', inline: true }
+                ])
+                .setFooter({ text: 'Game sẽ tự động khôi phục sau khi bot restart!' })
+                .setTimestamp();
+            
+            await interaction.reply({ embeds: [embed] });
+
+        } else if (action === 'stop') {
+            // Check permissions
+            if (!interaction.member.permissions.has('MANAGE_GUILD')) {
+                return interaction.reply({
+                    embeds: [errorEmbed('Bạn cần quyền "Quản lý server" để dừng tài xỉu!')],
+                    ephemeral: true
+                });
+            }
+
+            const gameData = await global.taiXiuManager.getGameData(guildId);
+            if (!gameData || !gameData.isActive) {
+                return interaction.reply({
+                    embeds: [errorEmbed('Không có game tài xỉu nào đang chạy!')],
+                    ephemeral: true
+                });
+            }
+
+            await global.taiXiuManager.stopGame(guildId);
+            
+            const embed = new EmbedBuilder()
+                .setColor('#ff6b6b')
+                .setTitle('⏹️ Tài Xỉu Đã Dừng!')
+                .setDescription('Game tài xỉu đã được dừng lại.')
+                .addFields([
+                    { name: '📊 Tổng ván đã chơi', value: `${gameData.round - 1}`, inline: true },
+                    { name: '📈 Lịch sử', value: `${gameData.history.length} kết quả`, inline: true }
+                ])
+                .setTimestamp();
+            
+            await interaction.reply({ embeds: [embed] });
+
+        } else if (action === 'status') {
+            const gameData = await global.taiXiuManager.getGameData(guildId);
+            if (!gameData) {
+                return interaction.reply({
+                    embeds: [errorEmbed('Chưa có game tài xỉu nào! Dùng `/taixiu room start` để bắt đầu.')],
+                    ephemeral: true
+                });
+            }
+
+            const gameState = global.taiXiuManager.getGameState(guildId);
+            const statusText = gameData.isActive ? 
+                (gameData.bettingPhase ? '💰 Đang nhận cược' : '🎲 Đang xử lý') : 
+                '⏸️ Đã dừng';
+            
+            const embed = new EmbedBuilder()
+                .setColor(gameData.isActive ? '#48dbfb' : '#95a5a6')
+                .setTitle('🎮 Trạng Thái Tài Xỉu')
+                .addFields([
+                    { name: '🎲 Ván hiện tại', value: `#${gameData.round}`, inline: true },
+                    { name: '📊 Trạng thái', value: statusText, inline: true },
+                    { name: '⏰ Thời gian còn lại', value: gameData.isActive ? `${gameData.timeLeft || 0}s` : 'N/A', inline: true },
+                    { name: '� Kênh game', value: gameData.channelId ? `<#${gameData.channelId}>` : 'Chưa đặt', inline: true },
+                    { name: '🏆 Tổng ván đã chơi', value: `${gameData.history.length}`, inline: true },
+                    { name: '🔄 Auto Restart', value: gameData.autoRestart ? 'Bật' : 'Tắt', inline: true }
+                ])
+                .setTimestamp();
+
+            await interaction.reply({ embeds: [embed] });
+        }
+    } catch (error) {
+        console.error('Room management error:', error);
+        await interaction.reply({
+            embeds: [errorEmbed('Có lỗi xảy ra khi quản lý phòng game!')],
+            ephemeral: true
+        });
     }
 }
 
