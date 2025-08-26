@@ -559,6 +559,60 @@ async function handleInfo(interaction) {
     await interaction.reply({ embeds: [embed] });
 }
 
+// Add autocomplete handler for loan command
+export async function autocomplete(interaction) {
+  try {
+    const focusedOption = interaction.options.getFocused(true);
+    
+    if (focusedOption.name === 'loan_id') {
+      const userId = interaction.user.id;
+      const guildId = interaction.guildId;
+      
+      // Get user's active loans
+      const user = await User.findOne({ userId, guildId });
+      if (!user || !user.loans || user.loans.length === 0) {
+        return await interaction.respond([
+          { name: 'Bạn không có khoản vay nào', value: 'no_loans' }
+        ]);
+      }
+      
+      // Filter active loans
+      const activeLoans = user.loans.filter(loan => !loan.isPaid);
+      
+      if (activeLoans.length === 0) {
+        return await interaction.respond([
+          { name: 'Không có khoản vay đang hoạt động', value: 'no_active_loans' }
+        ]);
+      }
+      
+      // Create choices from active loans
+      const choices = activeLoans.map((loan, index) => {
+        const loanId = loan._id || loan.id || index;
+        const amount = formatCurrency(loan.amount);
+        const interest = formatCurrency(loan.totalOwed);
+        const daysLeft = Math.max(0, Math.ceil((loan.dueDate - new Date()) / (1000 * 60 * 60 * 24)));
+        
+        return {
+          name: `ID: ${loanId.toString().slice(-6)} | Gốc: ${amount} | Nợ: ${interest} | Còn: ${daysLeft} ngày`,
+          value: loanId.toString()
+        };
+      }).slice(0, 25); // Discord autocomplete limit
+      
+      const filtered = choices.filter(choice => 
+        choice.name.toLowerCase().includes(focusedOption.value.toLowerCase()) ||
+        choice.value.includes(focusedOption.value)
+      );
+      
+      await interaction.respond(filtered.slice(0, 25));
+    }
+  } catch (error) {
+    console.error('Loan autocomplete error:', error);
+    await interaction.respond([
+      { name: 'Có lỗi xảy ra khi tải danh sách vay', value: 'error' }
+    ]);
+  }
+}
+
 // Helper functions
 function getTypeTitle(type) {
     const titles = {

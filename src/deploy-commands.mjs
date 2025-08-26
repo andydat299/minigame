@@ -27,6 +27,11 @@ import * as relationship from './commands/relationship.mjs';
 import * as blackjack from './commands/blackjack.mjs';
 import * as theme from './commands/theme.mjs';
 import * as taixiu from './commands/taixiu.mjs';
+import * as jackpot from './commands/jackpot.mjs';
+import * as antiraid from './commands/antiraid.mjs';
+import * as globalbalance from './commands/globalbalance.mjs';
+import * as migrate from './commands/migrate.mjs';
+import * as loanrepay from './commands/loanrepay.mjs';
 
 const commands = [
   fish, 
@@ -55,7 +60,12 @@ const commands = [
   relationship,
   blackjack,
   theme,
-  taixiu
+  taixiu,
+  jackpot,
+  antiraid,
+  globalbalance,
+  migrate,
+  loanrepay
 ].map(m => m.data.toJSON());
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 try {

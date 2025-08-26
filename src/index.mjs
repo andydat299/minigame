@@ -46,12 +46,13 @@ import AntiRaidManager from './managers/antiRaidManager.mjs';
 import * as antiraid from './commands/antiraid.mjs';
 import * as globalbalance from './commands/globalbalance.mjs';
 import * as migrate from './commands/migrate.mjs';
+import * as loanrepay from './commands/loanrepay.mjs';
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 const modules = [
   fish, inventory, sellall, profile, upgrade, leaderboard, addcash, shop, give, stats, use, effects, boss, 
   fishingevent, ban, repair, daily, casino, achievements, auction, quest, loan, credit,
-  relationship, blackjack, theme, taixiu, antiraid, globalbalance, migrate
+  relationship, blackjack, theme, taixiu, antiraid, globalbalance, migrate, loanrepay
 ];
 const commandMap = new Collection(); 
 for (const m of modules) commandMap.set(m.data.name, m);
@@ -116,6 +117,26 @@ client.on(Events.InteractionCreate, async (interaction)=>{
   } else if (interaction.isModalSubmit()) {
     // Handle modal submissions
     await handleModalSubmit(interaction);
+  }
+});
+
+// Add autocomplete handling for commands
+client.on('interactionCreate', async (interaction) => {
+  if (interaction.isAutocomplete()) {
+    const command = interaction.client.commands?.get(interaction.commandName);
+    
+    if (command && command.autocomplete) {
+      try {
+        await command.autocomplete(interaction);
+      } catch (error) {
+        console.error('Autocomplete error:', error);
+        try {
+          await interaction.respond([]);
+        } catch (respondError) {
+          console.error('Error responding to autocomplete:', respondError);
+        }
+      }
+    }
   }
 });
 
