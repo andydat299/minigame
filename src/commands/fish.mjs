@@ -1,5 +1,5 @@
-import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, EmbedBuilder } from 'discord.js';
-import User from '../models/User.mjs';
+import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import GlobalUser from '../models/GlobalUser.mjs';
 import GuildConfig from '../models/GuildConfig.mjs';
 import { rarityWeightsForRod, pickRarity, pickFishByRarity, boostWeightsLight, boostWeightsStrong, enforceMinRarity } from '../game/fishData.mjs';
 import { successEmbed, errorEmbed, infoEmbed, formatCurrency } from './util.mjs';

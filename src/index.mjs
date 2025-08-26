@@ -44,12 +44,14 @@ import { initLoanChecker } from './game/loanManager.mjs';
 import { checkBanStatus } from './middleware/banCheck.mjs';
 import AntiRaidManager from './managers/antiRaidManager.mjs';
 import * as antiraid from './commands/antiraid.mjs';
+import * as globalbalance from './commands/globalbalance.mjs';
+import * as migrate from './commands/migrate.mjs';
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 const modules = [
   fish, inventory, sellall, profile, upgrade, leaderboard, addcash, shop, give, stats, use, effects, boss, 
   fishingevent, ban, repair, daily, casino, achievements, auction, quest, loan, credit,
-  relationship, blackjack, theme, taixiu, antiraid
+  relationship, blackjack, theme, taixiu, antiraid, globalbalance, migrate
 ];
 const commandMap = new Collection(); 
 for (const m of modules) commandMap.set(m.data.name, m);
