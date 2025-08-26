@@ -169,6 +169,12 @@ async function handleButtonInteraction(interaction) {
       await handleTaiXiuCustomPlay(interaction);
     } else if (customId === 'quick_giftcode') {
       await handleQuickGiftcode(interaction);
+    } else if (customId === 'fish_cast') {
+      await handleFishCast(interaction);
+    } else if (customId === 'fish_inventory') {
+      await handleFishInventory(interaction);
+    } else if (customId === 'fish_repair') {
+      await handleFishRepair(interaction);
     }
   } catch (error) {
     console.error('Button interaction error:', error);
@@ -1300,4 +1306,191 @@ async function handleTaiXiuAnalysis(interaction) {
       ephemeral: true
     });
   }
+}
+
+// Handler cho thả cần câu
+async function handleFishCast(interaction) {
+  try {
+    await interaction.deferReply();
+    
+    const userId = interaction.user.id;
+    const guildId = interaction.guildId;
+    let user = await User.findOne({ userId, guildId });
+    
+    if (!user) {
+      user = await User.create({ userId, guildId });
+    }
+
+    const { getRodInfo, performFishing, updateUserStats, formatCurrency } = await import('./commands/fish.mjs');
+    
+    const rodInfo = getRodInfo(user);
+    if (!rodInfo.hasRod || rodInfo.durability <= 0) {
+      return interaction.editReply('❌ Cần câu của bạn đã hỏng hoặc không tồn tại! Hãy sửa chữa hoặc mua cần mới.');
+    }
+    
+    // Animation câu cá
+    const castingEmbed = new EmbedBuilder()
+      .setColor('#74b9ff')
+      .setTitle('🎣 Đang Thả Cần...')
+      .setDescription('*Bạn đang thả cần xuống nước...*\n\n🌊 ～～～ 🎣 ～～～ 🌊\n\n⏳ Chờ cá cắn câu...')
+      .setTimestamp();
+        
+    await interaction.editReply({ embeds: [castingEmbed] });
+    
+    // Chờ 2-3 giây để tạo hồi hộp
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    
+    // Thực hiện câu cá
+    const resultEmbed = await performFishing(user, rodInfo);
+    await updateUserStats(user, rodInfo);
+    
+    return interaction.editReply({ embeds: [resultEmbed] });
+    
+  } catch (error) {
+    console.error('Fish cast error:', error);
+    return interaction.editReply('❌ Có lỗi xảy ra khi câu cá!');
+  }
+}
+
+// Handler cho inventory
+async function handleFishInventory(interaction) {
+  try {
+    await interaction.deferReply({ ephemeral: true });
+    
+    const userId = interaction.user.id;
+    const guildId = interaction.guildId;
+    let user = await User.findOne({ userId, guildId });
+    
+    if (!user) {
+      return interaction.editReply('🎒 Túi cá của bạn đang trống!');
+    }
+
+    const { formatCurrency } = await import('./commands/fish.mjs');
+    
+    const embed = new EmbedBuilder()
+      .setColor('#a29bfe')
+      .setTitle('🎒 Túi Cá Của Bạn')
+      .setDescription('*Những con cá bạn đã câu được...*')
+      .setTimestamp();
+        
+    let fishList = '';
+    let totalValue = 0;
+    let totalFish = 0;
+    
+    // Hiển thị inventory cá
+    if (user.inventory && Object.keys(user.inventory).length > 0) {
+      for (const [fishType, quantity] of Object.entries(user.inventory)) {
+        if (quantity > 0) {
+          const fishInfo = getFishInfo(fishType);
+          const value = fishInfo.value * quantity;
+          totalValue += value;
+          totalFish += quantity;
+          
+          fishList += `${fishInfo.emoji} **${fishInfo.name}** x${quantity}\n`;
+          fishList += `   💰 ${formatCurrency(value)}\n\n`;
+        }
+      }
+    }
+    
+    if (!fishList) {
+      fishList = '🌊 Chưa có cá nào...';
+    }
+    
+    embed.setDescription(fishList);
+    embed.addFields([
+      {
+        name: '📊 Tổng Kết',
+        value: `🐟 **Tổng số cá:** ${totalFish}\n💎 **Tổng giá trị:** ${formatCurrency(totalValue)}`,
+        inline: false
+      }
+    ]);
+    
+    return interaction.editReply({ embeds: [embed] });
+    
+  } catch (error) {
+    console.error('Fish inventory error:', error);
+    return interaction.editReply('❌ Có lỗi xảy ra khi xem túi cá!');
+  }
+}
+
+// Handler cho sửa cần câu
+async function handleFishRepair(interaction) {
+  try {
+    await interaction.deferReply();
+    
+    const userId = interaction.user.id;
+    const guildId = interaction.guildId;
+    let user = await User.findOne({ userId, guildId });
+    
+    if (!user) {
+      return interaction.editReply('❌ Bạn chưa có tài khoản!');
+    }
+
+    const { getRodInfo, formatCurrency } = await import('./commands/fish.mjs');
+    
+    const rodInfo = getRodInfo(user);
+    if (!rodInfo.hasRod) {
+      return interaction.editReply('❌ Bạn chưa có cần câu!');
+    }
+    
+    if (rodInfo.durability >= rodInfo.maxDurability) {
+      return interaction.editReply('✅ Cần câu của bạn vẫn còn tốt, không cần sửa chữa!');
+    }
+    
+    // Tính toán chi phí sửa chữa
+    const missingDurability = rodInfo.maxDurability - rodInfo.durability;
+    const repairCost = missingDurability * 50; // 50 xu mỗi điểm độ bền
+    
+    if ((user.coins || 0) < repairCost) {
+      return interaction.editReply(`❌ Bạn cần ${formatCurrency(repairCost)} để sửa cần câu!\n(Hiện có: ${formatCurrency(user.coins || 0)})`);
+    }
+    
+    // Thực hiện sửa chữa
+    user.coins = (user.coins || 0) - repairCost;
+    user.rodDurability = rodInfo.maxDurability;
+    await user.save();
+    
+    const embed = new EmbedBuilder()
+      .setColor('#00b894')
+      .setTitle('🔧 Sửa Chữa Thành Công!')
+      .setDescription(`✨ Cần câu **${rodInfo.name}** đã được sửa chữa hoàn toàn!`)
+      .addFields([
+        {
+          name: '💰 Chi Phí',
+          value: formatCurrency(repairCost),
+          inline: true
+        },
+        {
+          name: '💎 Số Dư Còn Lại',
+          value: formatCurrency(user.coins),
+          inline: true
+        },
+        {
+          name: '🔧 Độ Bền Mới',
+          value: `${rodInfo.maxDurability}/${rodInfo.maxDurability} (100%)`,
+          inline: false
+        }
+      ])
+      .setTimestamp();
+        
+    return interaction.editReply({ embeds: [embed] });
+    
+  } catch (error) {
+    console.error('Fish repair error:', error);
+    return interaction.editReply('❌ Có lỗi xảy ra khi sửa cần câu!');
+  }
+}
+
+// Helper function để lấy thông tin cá
+function getFishInfo(fishType) {
+  const fishData = {
+    common: { name: 'Cá Chép', emoji: '🐟', value: 100 },
+    uncommon: { name: 'Cá Rô', emoji: '🐠', value: 250 },
+    rare: { name: 'Cá Hồi', emoji: '🍣', value: 500 },
+    epic: { name: 'Cá Vàng', emoji: '🟡', value: 1000 },
+    legendary: { name: 'Cá Rồng', emoji: '🐲', value: 2500 },
+    mythic: { name: 'Cá Thiêng', emoji: '⭐', value: 5000 }
+  };
+  
+  return fishData[fishType] || { name: 'Cá Lạ', emoji: '🐟', value: 50 };
 }

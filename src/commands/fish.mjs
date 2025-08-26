@@ -228,3 +228,40 @@ export async function execute(interaction) {
   // Gửi tin nhắn chào mừng nếu đủ điều kiện
   await sendWelcomeMessage(interaction, profile);
 }
+
+// Hàm tạo thanh độ bền visual
+function createDurabilityBar(percentage) {
+  const barLength = 10;
+  const filledLength = Math.round((percentage / 100) * barLength);
+  const emptyLength = barLength - filledLength;
+  
+  let bar = '';
+  
+  // Chọn emoji dựa trên phần trăm
+  if (percentage >= 80) {
+    bar = '🟩'.repeat(filledLength) + '⬜'.repeat(emptyLength);
+  } else if (percentage >= 60) {
+    bar = '🟨'.repeat(filledLength) + '⬜'.repeat(emptyLength);
+  } else if (percentage >= 40) {
+    bar = '🟧'.repeat(filledLength) + '⬜'.repeat(emptyLength);
+  } else {
+    bar = '🟥'.repeat(filledLength) + '⬜'.repeat(emptyLength);
+  }
+  
+  return `\`[${bar}]\``;
+}
+
+// Hàm lấy thông tin độ bền
+function getDurabilityInfo(percentage) {
+  if (percentage >= 80) {
+    return { color: '🟢', icon: '✨', status: 'Tuyệt vời' };
+  } else if (percentage >= 60) {
+    return { color: '🟡', icon: '⚡', status: 'Tốt' };
+  } else if (percentage >= 40) {
+    return { color: '🟠', icon: '⚠️', status: 'Trung bình' };
+  } else if (percentage >= 20) {
+    return { color: '🔴', icon: '💥', status: 'Kém' };
+  } else {
+    return { color: '💀', icon: '☠️', status: 'Hỏng nặng' };
+  }
+}
