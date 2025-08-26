@@ -42,12 +42,14 @@ import { initEventScheduler } from './commands/fishingevent.mjs';
 import { initializeQuests } from './game/questManager.mjs';
 import { initLoanChecker } from './game/loanManager.mjs';
 import { checkBanStatus } from './middleware/banCheck.mjs';
+import AntiRaidManager from './managers/antiRaidManager.mjs';
+import * as antiraid from './commands/antiraid.mjs';
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 const modules = [
   fish, inventory, sellall, profile, upgrade, leaderboard, addcash, shop, give, stats, use, effects, boss, 
   fishingevent, ban, repair, daily, casino, achievements, auction, quest, loan, credit,
-  relationship, blackjack, theme, taixiu
+  relationship, blackjack, theme, taixiu, antiraid
 ];
 const commandMap = new Collection(); 
 for (const m of modules) commandMap.set(m.data.name, m);
@@ -86,6 +88,9 @@ initEventScheduler();
   } catch (error) {
     console.error('Error initializing TaiXiu Game Manager:', error);
   }
+
+  // Initialize AntiRaid Manager
+  const antiRaidManager = new AntiRaidManager(client);
 });
 
 client.on(Events.InteractionCreate, async (interaction)=>{
@@ -1307,6 +1312,29 @@ async function handleTaiXiuAnalysis(interaction) {
     });
   }
 }
+
+// AntiRaid event handlers
+client.on('guildMemberAdd', async (member) => {
+  console.log(`New member joined: ${member.user.tag} in ${member.guild.name}`);
+  
+  // AntiRaid check for join spam
+  try {
+    await antiRaidManager.checkJoinSpam(member);
+  } catch (error) {
+    console.error('AntiRaid join check error:', error);
+  }
+});
+
+client.on('messageCreate', async (message) => {
+  if (message.author.bot || !message.guild) return;
+  
+  // AntiRaid check for message spam
+  try {
+    await antiRaidManager.checkMessageSpam(message);
+  } catch (error) {
+    console.error('AntiRaid message check error:', error);
+  }
+});
 
 // Handler cho thả cần câu
 async function handleFishCast(interaction) {
